@@ -2,6 +2,7 @@
 import json
 import os
 import subprocess
+import tempfile
 import urllib.request
 
 
@@ -26,11 +27,16 @@ class ClaudeCodeBackend:
         return env
 
     def complete(self, prompt, timeout=300):
-        args = [self.command, "-p", "--output-format", "json"]
+        # --strict-mcp-config with no --mcp-config => load ZERO MCP servers.
+        # Running from a neutral temp cwd => the CLI won't pick up this project's
+        # CLAUDE.md / settings / .mcp.json. Both keep the call fast, single-turn
+        # and hermetic (no tool prompts that can stall a headless run).
+        args = [self.command, "-p", "--output-format", "json", "--strict-mcp-config"]
         if self.model:
             args += ["--model", self.model]
         proc = subprocess.run(args, input=prompt, capture_output=True,
-                              text=True, timeout=timeout, env=self._env())
+                              text=True, timeout=timeout, env=self._env(),
+                              cwd=tempfile.gettempdir())
         # The CLI reports API/auth/limit errors as is_error in stdout JSON while
         # STILL exiting non-zero, leaving stderr empty. So parse stdout first and
         # surface its message before falling back to stderr.
