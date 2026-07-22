@@ -1,0 +1,106 @@
+"""Pluggable LLM backends: Claude Code subscription (headless CLI) or Ollama."""
+import json
+import os
+import subprocess
+import urllib.request
+
+
+class ClaudeCodeBackend:
+    """Uses your Claude Code subscription via `claude -p` — no API key needed."""
+
+    def __init__(self, cfg):
+        cc = cfg["llm"]["claude_code"]
+        self.command = cc.get("command", "claude")
+        self.model = cc.get("model") or None
+        # Force subscription auth: a stray ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN
+        # in the environment makes the CLI try API-key auth and 401 on a
+        # subscription plan. Strip them from the child env unless disabled.
+        self.use_subscription = cc.get("use_subscription", True)
+        self.name = f"claude-code:{self.model or 'default'}"
+
+    def _env(self):
+        env = os.environ.copy()
+        if self.use_subscription:
+            env.pop("ANTHROPIC_API_KEY", None)
+            env.pop("ANTHROPIC_AUTH_TOKEN", None)
+        return env
+
+    def complete(self, prompt, timeout=300):
+        args = [self.command, "-p", "--output-format", "json"]
+        if self.model:
+            args += ["--model", self.model]
+        proc = subprocess.run(args, input=prompt, capture_output=True,
+                              text=True, timeout=timeout, env=self._env())
+        # The CLI reports API/auth/limit errors as is_error in stdout JSON while
+        # STILL exiting non-zero, leaving stderr empty. So parse stdout first and
+        # surface its message before falling back to stderr.
+        wrapper = None
+        if proc.stdout.strip():
+            try:
+                wrapper = json.loads(proc.stdout)
+            except json.JSONDecodeError:
+                pass
+        if wrapper is not None and wrapper.get("is_error"):
+            raise RuntimeError(f"claude CLI error: {wrapper.get('result', '') or 'unknown'}")
+        if proc.returncode != 0:
+            msg = (proc.stderr.strip() or proc.stdout.strip()
+                   or f"exited {proc.returncode} with no output")
+            raise RuntimeError(f"claude CLI failed: {msg[:800]}")
+        if wrapper is None:
+            raise RuntimeError(f"claude CLI: could not parse output: {proc.stdout[:300]!r}")
+        return wrapper["result"]
+
+
+class OllamaBackend:
+    def __init__(self, cfg):
+        oc = cfg["llm"]["ollama"]
+        self.host = oc.get("host", "http://localhost:11434").rstrip("/")
+        self.model = oc["model"]
+        self.name = f"ollama:{self.model}"
+
+    def complete(self, prompt, timeout=600):
+        body = json.dumps({
+            "model": self.model,
+            "messages": [{"role": "user", "content": prompt}],
+            "stream": False,
+            "options": {"temperature": 0.2},
+        }).encode()
+        req = urllib.request.Request(self.host + "/api/chat", data=body,
+                                     headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read())["message"]["content"]
+
+
+def get_backend(cfg):
+    backend = cfg["llm"]["backend"]
+    if backend == "claude-code":
+        return ClaudeCodeBackend(cfg)
+    if backend == "ollama":
+        return OllamaBackend(cfg)
+    raise ValueError(f"Unknown llm.backend: {backend} (use 'claude-code' or 'ollama')")
+
+
+def extract_json_array(text):
+    """Pull the first JSON array out of an LLM reply (tolerates prose/fences)."""
+    start = text.find("[")
+    if start == -1:
+        raise ValueError("no JSON array in LLM reply")
+    depth, in_str, esc = 0, False, False
+    for i in range(start, len(text)):
+        ch = text[i]
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+        elif ch == '"':
+            in_str = True
+        elif ch == "[":
+            depth += 1
+        elif ch == "]":
+            depth -= 1
+            if depth == 0:
+                return json.loads(text[start:i + 1])
+    raise ValueError("unterminated JSON array in LLM reply")

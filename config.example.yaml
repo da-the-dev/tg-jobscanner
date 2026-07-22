@@ -1,0 +1,55 @@
+# Copy to config.yaml and fill in. config.yaml is gitignored — keep secrets there.
+
+# "web": scrape t.me/s/<channel> previews — PUBLIC channels only, no account,
+#        no credentials, no login. Recommended start.
+# "mtproto": full client via your own account — needed for private channels.
+#            Requires api_id/api_hash from https://my.telegram.org + one login.
+fetch_mode: "web"
+
+telegram:                  # only needed for fetch_mode: mtproto
+  api_id: 0                # from https://my.telegram.org -> API development tools
+  api_hash: ""
+  session: "jobscan"       # session file name (created by `python -m jobscan login`)
+
+# Channel usernames or t.me links. Run `python -m jobscan channels` to list yours.
+channels:
+  - "some_it_jobs_channel"
+  - "https://t.me/another_jobs_channel"
+
+backfill:                  # limits for the FIRST scan of each channel
+  days: 30                 # don't go further back than this…
+  max_messages: 100        # …and never more than this many messages per channel
+
+prefilter:                 # zero-cost filter before any LLM call
+  min_length: 80
+  # Message must contain at least one of these (your stack / role words, RU+EN).
+  # Empty list [] disables this check (only generic job-signal filtering applies).
+  my_keywords: ["python", "backend", "разработчик", "developer"]
+
+llm:
+  # === PICK ONE ===
+  #   "claude-code" -> Case A: Claude models via your Claude Code subscription
+  #   "ollama"      -> Case B: a local model, zero cost, fully offline
+  backend: "claude-code"
+  batch_size: 5            # postings per LLM call (higher = fewer calls = cheaper)
+  output_language: "en"    # "en" or "ru" — language of the analysis in the dashboard
+
+  # --- Case A: Claude subscription (used only when backend: claude-code) ---
+  claude_code:
+    command: "claude"      # path to the claude CLI if not on PATH
+    model: ""              # "" = plan default; "haiku" = cheapest; "sonnet" = best
+    use_subscription: true # strips ANTHROPIC_API_KEY/AUTH_TOKEN so the CLI uses
+                           # your subscription login (prevents the 401). Set false
+                           # only if you deliberately want CLI API-key auth.
+
+  # --- Case B: local Ollama (used only when backend: ollama) ---
+  ollama:
+    host: "http://localhost:11434"
+    model: "qwen2.5:14b"   # must be pulled first: `ollama pull qwen2.5:14b`
+
+scoring:
+  min_score: 40            # dashboard's default "min score" filter value
+
+resume_path: "resume.md"
+db_path: "jobscan.db"
+dashboard_path: "dashboard.html"

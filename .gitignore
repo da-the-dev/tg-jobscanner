@@ -223,3 +223,5 @@ config.yaml
 .DS_Store
 *.db
 *.session
+resume.md
+
