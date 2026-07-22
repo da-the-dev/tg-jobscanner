@@ -32,6 +32,8 @@ llm:
   #   "ollama"      -> Case B: a local model, zero cost, fully offline
   backend: "claude-code"
   batch_size: 5            # postings per LLM call (higher = fewer calls = cheaper)
+  concurrency: 4           # batches scored in parallel. 4-6 good for claude-code;
+                           # use 1 for ollama on a single local GPU
   output_language: "en"    # "en" or "ru" — language of the analysis in the dashboard
 
   # --- Case A: Claude subscription (used only when backend: claude-code) ---

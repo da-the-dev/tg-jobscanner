@@ -111,6 +111,10 @@ Unload with `launchctl unload ~/Library/LaunchAgents/com.jobscan.daily.plist`.
 - Prefilter (`prefilter.my_keywords`) drops non-matching posts for free —
   tune it to your stack; empty list = only generic job-post detection.
 - `llm.batch_size: 5` postings per LLM call; raise to save calls.
+- `llm.concurrency: 4` batches are scored in parallel with a live progress
+  bar. Raise it (4–6) to finish a big backlog faster on `claude-code`; set it
+  to `1` for Ollama on a single local GPU. Cost is unchanged — same number of
+  calls, just overlapped.
 - Verdict cache means a rerun after failure only pays for what's new.
 - `llm.claude_code.model: "haiku"` for the cheapest scoring.
 

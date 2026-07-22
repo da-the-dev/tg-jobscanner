@@ -11,6 +11,7 @@ DEFAULTS = {
     "llm": {
         "backend": "claude-code",
         "batch_size": 5,
+        "concurrency": 4,
         "output_language": "en",
         "claude_code": {"command": "claude", "model": "", "use_subscription": True},
         "ollama": {"host": "http://localhost:11434", "model": "qwen2.5:14b"},

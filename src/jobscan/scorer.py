@@ -1,7 +1,9 @@
 """Score prefiltered messages against the resume, in batches, with caching."""
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 from . import prefilter
-from .db import text_hash
 from .llm import extract_json_array
+from .progress import Progress
 
 PROMPT = """You are screening Telegram job postings (Russian or English) against a candidate's resume.
 
@@ -26,53 +28,88 @@ POSTINGS:
 {postings}"""
 
 
-def score_pending(cfg, db, backend, resume, log=print):
-    """Take status='new' messages, prefilter, batch-score, cache verdicts."""
+def _build_queue(cfg, db):
+    """Prefilter + dedupe status='new' messages into a scoring queue."""
     pf = cfg["prefilter"]
-    lang = {"en": "English", "ru": "Russian"}.get(
-        cfg["llm"]["output_language"], cfg["llm"]["output_language"])
-    batch_size = int(cfg["llm"]["batch_size"])
-
     queue = []  # (channel_id, msg_id, hash, text)
+    seen = set()
     for m in db.pending_messages():
         h = m["text_hash"]
         if db.has_verdict(h):  # cross-post already scored earlier
             db.set_status(m["channel_id"], m["msg_id"], "scored")
             continue
-        passed, reason = prefilter.is_job_post(m["text"], pf["min_length"], pf["my_keywords"])
+        passed, _ = prefilter.is_job_post(m["text"], pf["min_length"], pf["my_keywords"])
         if not passed:
             db.set_status(m["channel_id"], m["msg_id"], "filtered_out")
             continue
-        if any(q[2] == h for q in queue):  # dupe inside this run
+        if h in seen:  # dupe inside this run
             db.set_status(m["channel_id"], m["msg_id"], "duplicate")
             continue
+        seen.add(h)
         queue.append((m["channel_id"], m["msg_id"], h, m["text"]))
+    return queue
 
-    log(f"  {len(queue)} new unique postings to score (backend: {backend.name})")
-    scored = 0
-    for i in range(0, len(queue), batch_size):
-        batch = queue[i:i + batch_size]
+
+def _run_batch(backend, prompt):
+    """Runs in a worker thread. Returns parsed verdicts or raises."""
+    return extract_json_array(backend.complete(prompt))
+
+
+def score_pending(cfg, db, backend, resume, log=print):
+    """Take status='new' messages, prefilter, batch-score in parallel, cache."""
+    lang = {"en": "English", "ru": "Russian"}.get(
+        cfg["llm"]["output_language"], cfg["llm"]["output_language"])
+    batch_size = int(cfg["llm"]["batch_size"])
+    concurrency = max(1, int(cfg["llm"].get("concurrency", 4)))
+
+    queue = _build_queue(cfg, db)
+    if not queue:
+        log(f"  0 new unique postings to score (backend: {backend.name})")
+        return 0
+
+    batches = [queue[i:i + batch_size] for i in range(0, len(queue), batch_size)]
+    log(f"  {len(queue)} postings in {len(batches)} batches "
+        f"× {concurrency} workers (backend: {backend.name})")
+
+    # Build prompts up front (pure CPU), then farm the LLM calls to threads.
+    jobs = []
+    for batch in batches:
         postings = "\n\n".join(
             f"--- posting id={j + 1} ---\n{prefilter.compact(item[3])}"
             for j, item in enumerate(batch))
-        prompt = PROMPT.format(resume=resume, n=len(batch), lang=lang, postings=postings)
-        try:
-            verdicts = extract_json_array(backend.complete(prompt))
-        except Exception as e:
-            log(f"  !! batch failed, marking as error: {e}")
-            for cid, mid, _, _ in batch:
-                db.set_status(cid, mid, "error")
-            continue
-        by_id = {int(v.get("id", 0)): v for v in verdicts if isinstance(v, dict)}
-        for j, (cid, mid, h, _) in enumerate(batch):
-            v = by_id.get(j + 1)
-            if v is None:
-                db.set_status(cid, mid, "error")
+        jobs.append((batch, PROMPT.format(resume=resume, n=len(batch),
+                                          lang=lang, postings=postings)))
+
+    scored = failed = 0
+    bar = Progress(len(jobs), label="  scoring")
+    # DB writes happen ONLY here on the main thread as futures complete.
+    with ThreadPoolExecutor(max_workers=concurrency) as pool:
+        futures = {pool.submit(_run_batch, backend, prompt): batch
+                   for batch, prompt in jobs}
+        for fut in as_completed(futures):
+            batch = futures[fut]
+            try:
+                verdicts = fut.result()
+                by_id = {int(v.get("id", 0)): v for v in verdicts
+                         if isinstance(v, dict)}
+            except Exception as e:
+                failed += 1
+                for cid, mid, _, _ in batch:
+                    db.set_status(cid, mid, "error")
+                bar.advance(suffix=f"⚠ {str(e)[:40]}")
                 continue
-            db.save_verdict(h, v, backend.name)
-            db.set_status(cid, mid, "scored")
-            scored += 1
-        log(f"  scored {min(i + batch_size, len(queue))}/{len(queue)}")
+            for j, (cid, mid, h, _) in enumerate(batch):
+                v = by_id.get(j + 1)
+                if v is None:
+                    db.set_status(cid, mid, "error")
+                    continue
+                db.save_verdict(h, v, backend.name)
+                db.set_status(cid, mid, "scored")
+                scored += 1
+            bar.advance(suffix=f"{scored} scored")
+    bar.close()
+    if failed:
+        log(f"  !! {failed} batch(es) failed — rerun with --retry-errors")
     return scored
 
 
