@@ -4,7 +4,11 @@ import json
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Allow running directly (`python tests/dry_run.py`) without installing, by
+# putting src/ on the path. After `uv sync`/`pip install -e .` the plain
+# `import jobscan` also works because the package is installed.
+sys.path.insert(0, os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 from jobscan import dashboard, scorer
 from jobscan.config import DEFAULTS, _merge
 from jobscan.db import DB

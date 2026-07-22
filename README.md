@@ -31,17 +31,22 @@ works, just use `fetch_mode: web`.
 
 ## Setup (one-time, ~5 min in web mode)
 
-1. **Install:**
+1. **Install (uv):**
    ```bash
    cd telegram-jobscan
-   python3 -m pip install -r requirements.txt   # web mode needs only PyYAML
+   uv sync                       # installs deps + the `jobscan` command
    cp config.example.yaml config.yaml
    ```
+   (Plain pip works too: `pip install -e .`)
 2. **Fill `config.yaml`** — channel list (public @usernames or t.me links).
 3. **Resume:** paste your resume into `resume.md`.
 4. **LLM:** pick one of the two cases below.
-5. *(mtproto mode only)* set api_id/api_hash, then `python3 -m jobscan login`
-   once; `python3 -m jobscan channels` lists your subscriptions.
+5. *(mtproto mode only)* set api_id/api_hash, then `uv run jobscan login`
+   once; `uv run jobscan channels` lists your subscriptions.
+
+The project uses a `src/` layout and exposes a console script, so always
+invoke it as `uv run jobscan …` (or just `jobscan …` inside an activated
+venv) — not by running a file directly.
 
 ## Choosing your LLM
 
@@ -78,10 +83,10 @@ prefilter, and dashboard are identical either way.
 ## Usage
 
 ```bash
-python3 -m jobscan run             # fetch + score + render dashboard.html
-python3 -m jobscan render --open   # re-render from cache and open in browser
-python3 -m jobscan stats           # message counts by status
-python3 -m jobscan run --retry-errors  # also retry previously failed batches
+uv run jobscan run             # fetch + score + render dashboard.html
+uv run jobscan render --open   # re-render from cache and open in browser
+uv run jobscan stats           # message counts by status
+uv run jobscan run --retry-errors  # also retry previously failed batches
 ```
 
 Open `dashboard.html` in a browser: sort by any column, filter by score /
