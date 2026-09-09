@@ -1,9 +1,12 @@
 """Pluggable LLM backends: Claude Code subscription (headless CLI) or Ollama."""
+
 import json
 import os
 import subprocess
 import tempfile
 import urllib.request
+
+import openai
 
 
 class ClaudeCodeBackend:
@@ -34,9 +37,15 @@ class ClaudeCodeBackend:
         args = [self.command, "-p", "--output-format", "json", "--strict-mcp-config"]
         if self.model:
             args += ["--model", self.model]
-        proc = subprocess.run(args, input=prompt, capture_output=True,
-                              text=True, timeout=timeout, env=self._env(),
-                              cwd=tempfile.gettempdir())
+        proc = subprocess.run(
+            args,
+            input=prompt,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            env=self._env(),
+            cwd=tempfile.gettempdir(),
+        )
         # The CLI reports API/auth/limit errors as is_error in stdout JSON while
         # STILL exiting non-zero, leaving stderr empty. So parse stdout first and
         # surface its message before falling back to stderr.
@@ -47,13 +56,20 @@ class ClaudeCodeBackend:
             except json.JSONDecodeError:
                 pass
         if wrapper is not None and wrapper.get("is_error"):
-            raise RuntimeError(f"claude CLI error: {wrapper.get('result', '') or 'unknown'}")
+            raise RuntimeError(
+                f"claude CLI error: {wrapper.get('result', '') or 'unknown'}"
+            )
         if proc.returncode != 0:
-            msg = (proc.stderr.strip() or proc.stdout.strip()
-                   or f"exited {proc.returncode} with no output")
+            msg = (
+                proc.stderr.strip()
+                or proc.stdout.strip()
+                or f"exited {proc.returncode} with no output"
+            )
             raise RuntimeError(f"claude CLI failed: {msg[:800]}")
         if wrapper is None:
-            raise RuntimeError(f"claude CLI: could not parse output: {proc.stdout[:300]!r}")
+            raise RuntimeError(
+                f"claude CLI: could not parse output: {proc.stdout[:300]!r}"
+            )
         return wrapper["result"]
 
 
@@ -65,16 +81,45 @@ class OllamaBackend:
         self.name = f"ollama:{self.model}"
 
     def complete(self, prompt, timeout=600):
-        body = json.dumps({
-            "model": self.model,
-            "messages": [{"role": "user", "content": prompt}],
-            "stream": False,
-            "options": {"temperature": 0.2},
-        }).encode()
-        req = urllib.request.Request(self.host + "/api/chat", data=body,
-                                     headers={"Content-Type": "application/json"})
+        body = json.dumps(
+            {
+                "model": self.model,
+                "messages": [{"role": "user", "content": prompt}],
+                "stream": False,
+                "options": {"temperature": 0.2},
+            }
+        ).encode()
+        req = urllib.request.Request(
+            self.host + "/api/chat",
+            data=body,
+            headers={"Content-Type": "application/json"},
+        )
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return json.loads(resp.read())["message"]["content"]
+
+
+class OpenrouterBackend:
+    def __init__(self, cfg):
+        oc = cfg["llm"]["openrouter"]
+        self.host = oc.get("host", "https://openrouter.ai/api/v1").rstrip("/")
+        self.model = oc["model"]
+        self.name = f"openrouter:{self.model}"
+        self.api_key = os.environ.get("OPENROUTER_API_KEY")
+        if not self.api_key:
+            raise ValueError("No OPENROUTER_API_KEY specified in the env")
+
+    def complete(self, prompt, timeout=600):
+        with openai.Client(
+            api_key=self.api_key, base_url=self.host, timeout=timeout
+        ) as client:
+            resp = client.responses.create(
+                model=self.model,
+                stream=False,
+                input=[{"role": "user", "content": prompt}],
+                temperature=0.2,
+                reasoning={"effort": "none"},
+            )
+        return resp.output_text
 
 
 def get_backend(cfg):
@@ -83,7 +128,11 @@ def get_backend(cfg):
         return ClaudeCodeBackend(cfg)
     if backend == "ollama":
         return OllamaBackend(cfg)
-    raise ValueError(f"Unknown llm.backend: {backend} (use 'claude-code' or 'ollama')")
+    if backend == "openrouter":
+        return OpenrouterBackend(cfg)
+    raise ValueError(
+        f"Unknown llm.backend: {backend} (use 'claude-code' or 'ollama' or 'openrouter')"
+    )
 
 
 def extract_json_array(text):
@@ -108,5 +157,5 @@ def extract_json_array(text):
         elif ch == "]":
             depth -= 1
             if depth == 0:
-                return json.loads(text[start:i + 1])
+                return json.loads(text[start : i + 1])
     raise ValueError("unterminated JSON array in LLM reply")

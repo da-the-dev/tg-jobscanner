@@ -34,7 +34,7 @@ class Progress:
             self.stream.write("\r" + line + "\033[K")
             self.stream.flush()
         elif pct != self._last_line_pct and pct % 10 == 0:
-            # non-interactive (launchd): one line every ~10%
+            # non-interactive (cron / container logs): one line every ~10%
             self.stream.write(line + "\n")
             self.stream.flush()
             self._last_line_pct = pct

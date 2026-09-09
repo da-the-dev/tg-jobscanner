@@ -84,16 +84,66 @@ prefilter, and dashboard are identical either way.
 
 ```bash
 uv run jobscan run             # fetch + score + render dashboard.html
-uv run jobscan render --open   # re-render from cache and open in browser
+uv run jobscan serve --open    # live dashboard; status changes save to the DB
+uv run jobscan render --open   # re-render the static file and open it
 uv run jobscan stats           # message counts by status
 uv run jobscan run --retry-errors  # also retry previously failed batches
 ```
 
-Open `dashboard.html` in a browser: sort by any column, filter by score /
-channel / text, click a row for the why-apply / why-skip / strengths / gaps
-analysis, click **Open in TG** to jump to the original message. The
-new/applied/skipped status you set per job survives re-renders (stored in
-browser localStorage).
+The dashboard: sort by any column, filter by score / channel / text, click a
+row for the why-apply / why-skip / strengths / gaps analysis, click **Open in
+TG** to jump to the original message.
+
+## Tracking what you applied to
+
+Every posting carries a status — `new → applied → interviewing → offer`, plus
+`rejected` and `skipped` — with a free-text note and a timestamped history of
+every change. All of it lives in SQLite (`applications` table), so it survives
+re-renders, re-runs, and moving the DB between machines.
+
+```bash
+uv run jobscan serve --open                 # edit statuses/notes in the browser
+uv run jobscan mark 95702c applied --note "referred by Ann"
+uv run jobscan mark 95702c rejected --note "wanted more MLOps"
+uv run jobscan applications                 # everything you're tracking
+uv run jobscan applications --status applied --history
+```
+
+`mark` takes any unique prefix of the posting hash shown by `applications` (and
+by the dashboard's per-row detail). Status filter pills at the top of the page
+show counts; **Open** hides rejected/skipped, and anything you're tracking stays
+visible even if it falls below the min-score filter.
+
+**Two ways to edit, one source of truth.** Under `jobscan serve` (default
+`127.0.0.1:8765`, loopback-only, no auth) each change POSTs straight to the DB.
+If you instead open `dashboard.html` as a plain file, changes queue in the
+browser and a banner offers **Sync now** — start `jobscan serve` and they flush
+into the DB (the page also retries automatically on load). Statuses set with the
+old localStorage-only dashboard are imported into that queue the first time you
+open the new one.
+
+The server is FastAPI + uvicorn: `POST /api/status` (one change or a batch),
+`GET /api/applications[?status=…]`, `GET /api/health`, and interactive docs at
+`/api/docs`. An unknown status is rejected per item rather than failing the
+whole batch, so a bad entry can't wedge the browser's retry queue.
+
+## Layout
+
+```
+src/jobscan/
+  models.py              SQLAlchemy models: channels, messages, verdicts,
+                         applications, application_events
+  db.py                  DB facade — one short-lived session per call, so the
+                         same object is safe for the CLI and the API server
+  fetcher.py             mtproto fetch (telethon)
+  fetcher_web.py         t.me/s/<channel> fetch, no credentials
+  prefilter.py           free keyword/job-signal filter
+  scorer.py              batched, parallel LLM scoring with a verdict cache
+  llm.py                 claude-code / ollama backends
+  server.py              FastAPI app + `jobscan serve`
+  dashboard.py           fills the template from the DB
+  templates/dashboard.html   the page itself (edit this for UI changes)
+```
 
 ## Daily schedule (optional)
 

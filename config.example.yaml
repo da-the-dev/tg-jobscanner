@@ -6,10 +6,10 @@
 #            Requires api_id/api_hash from https://my.telegram.org + one login.
 fetch_mode: "web"
 
-telegram:                  # only needed for fetch_mode: mtproto
-  api_id: 0                # from https://my.telegram.org -> API development tools
-  api_hash: ""
-  session: "jobscan"       # session file name (created by `python -m jobscan login`)
+telegram:                          # only needed for fetch_mode: mtproto
+  api_id: ${TELEGRAM_API_ID}       # from https://my.telegram.org -> API development tools
+  api_hash: "${TELEGRAM_API_HASH}"
+  session: "jobscan"               # session file name (created by `python -m jobscan login`)
 
 # Channel usernames or t.me links. Run `python -m jobscan channels` to list yours.
 channels:
@@ -27,16 +27,23 @@ prefilter:                 # zero-cost filter before any LLM call
   my_keywords: ["python", "backend", "разработчик", "developer"]
 
 llm:
-  # === PICK ONE ===
-  #   "claude-code" -> Case A: Claude models via your Claude Code subscription
-  #   "ollama"      -> Case B: a local model, zero cost, fully offline
-  backend: "claude-code"
+  # === PICK ONE (in order of preference) ===
+  #   "openrouter"  -> 1. pay-per-token hosted models, cheap, nothing to install
+  #   "claude-code" -> 2. Claude via a Claude Code subscription (no per-token cost)
+  #   "ollama"      -> 3. a local model: zero cost, fully offline, lower quality
+  backend: "openrouter"
   batch_size: 5            # postings per LLM call (higher = fewer calls = cheaper)
-  concurrency: 4           # batches scored in parallel. 4-6 good for claude-code;
-                           # use 1 for ollama on a single local GPU
+  concurrency: 4           # batches scored in parallel. 4-6 good for openrouter /
+                           # claude-code; use 1 for ollama on a single local GPU
   output_language: "en"    # "en" or "ru" — language of the analysis in the dashboard
 
-  # --- Case A: Claude subscription (used only when backend: claude-code) ---
+  # --- 1. OpenRouter (used only when backend: openrouter) ---
+  # Requires OPENROUTER_API_KEY in the environment.
+  openrouter:
+    model: "deepseek/deepseek-chat"   # any id from https://openrouter.ai/models
+    # host: "https://openrouter.ai/api/v1"   # override only if you proxy it
+
+  # --- 2. Claude subscription (used only when backend: claude-code) ---
   claude_code:
     command: "claude"      # path to the claude CLI if not on PATH
     model: ""              # "" = plan default; "haiku" = cheapest; "sonnet" = best
@@ -44,13 +51,17 @@ llm:
                            # your subscription login (prevents the 401). Set false
                            # only if you deliberately want CLI API-key auth.
 
-  # --- Case B: local Ollama (used only when backend: ollama) ---
+  # --- 3. local Ollama (used only when backend: ollama) ---
   ollama:
     host: "http://localhost:11434"
     model: "qwen2.5:14b"   # must be pulled first: `ollama pull qwen2.5:14b`
 
 scoring:
   min_score: 40            # dashboard's default "min score" filter value
+
+serve:                     # `jobscan serve` — dashboard that writes status back to the DB
+  host: "127.0.0.1"        # loopback only; the API has no auth
+  port: 8765
 
 resume_path: "resume.md"
 db_path: "jobscan.db"
