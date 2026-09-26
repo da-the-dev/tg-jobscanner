@@ -4,7 +4,8 @@ Scans your subscribed Telegram job channels, filters and scores postings against
 your resume with an LLM, and renders an HTML dashboard with rankings, pros/cons,
 your strengths/gaps, and direct links to each message.
 
-Pipeline: `fetch new msgs → dedupe → prefilter (free) → LLM score → SQLite → dashboard`
+Pipeline: `fetch new msgs → dedupe → prefilter (free) → follow apply links for
+thin postings → LLM score → auto-flag dealbreakers → SQLite → dashboard`
 
 The prefilter is free and does three things: drops messages that don't read as a
 job posting, drops candidates advertising *themselves* (`#резюме` / "open to
@@ -60,22 +61,41 @@ venv) — not by running a file directly.
 
 ## Choosing your LLM
 
-Set `llm.backend` in `config.yaml` to `openrouter`, `claude-code`, or `ollama`.
-Switching is just that one line — the cache, prefilter, and dashboard are
-identical either way.
+Set `llm.backend` in `config.yaml` to `openai` or `claude-code`. Switching is
+just that one line — the cache, prefilter, and dashboard are identical either
+way.
 
-### 1. OpenRouter (`backend: openrouter`) — recommended
-Pay-per-token access to every hosted model worth using (DeepSeek, Llama, Qwen,
-GPT, Gemini, Claude, …). Nothing to install, no subscription, and a cheap model
-scores a full backlog for cents. This is the default in `config.example.yaml`.
+### 1. Any OpenAI-compatible endpoint (`backend: openai`) — recommended
+
+This one backend talks to anything that speaks the OpenAI `/responses` API:
+a hosted pay-per-token service, or a model you run yourself.
+
+**OpenRouter** is the go-to and the default in `config.example.yaml` — pay-per-
+token access to every hosted model worth using (DeepSeek, Llama, Qwen, GPT,
+Gemini, Claude, …), nothing to install, no subscription, and a cheap model
+scores a full backlog for cents.
 
 Set `OPENROUTER_API_KEY` in the environment and pick a model:
 ```yaml
 llm:
-  backend: "openrouter"
-  openrouter:
-    model: "deepseek/deepseek-chat"   # anything from openrouter.ai/models
+  backend: "openai"
+  openai:
+    host: "https://openrouter.ai/api/v1"   # the default, can be omitted
+    model: "deepseek/deepseek-chat"        # anything from openrouter.ai/models
 ```
+
+**Self-hosted** (Ollama, vLLM, LM Studio, …) works the same way — just point
+`host` at its OpenAI-compatible endpoint. Most don't check the API key at all,
+so `api_key_env` can be left unset:
+```yaml
+llm:
+  backend: "openai"
+  openai:
+    host: "http://localhost:11434/v1"   # Ollama's OpenAI-compatible endpoint
+    model: "qwen2.5:14b"                # must be pulled first: `ollama pull qwen2.5:14b`
+```
+Zero cost, fully offline, nothing leaves your machine — the tradeoff is lower
+scoring quality and a slower run than a hosted model.
 
 ### 2. Claude via your subscription (`backend: claude-code`)
 Uses the `claude` CLI, no per-token cost — worth it if you already pay for a
@@ -92,16 +112,44 @@ printf 'Reply with just: ok' | claude -p --output-format json
 Want `"is_error": false`. If it says *Not logged in*, run `claude` then
 `/login`. Tune cost with `claude_code.model: "haiku"`.
 
-### 3. Local model via Ollama (`backend: ollama`)
-Zero cost, fully offline, nothing leaves your machine — the choice when privacy
-matters more than quality.
-```bash
-brew install ollama          # or from ollama.com
-ollama serve                 # runs the local server
-ollama pull qwen2.5:14b      # match llm.ollama.model in config
-```
-Scoring quality is lower and each run is slower. Smaller models (e.g.
-`llama3.1:8b`) are faster; larger ones score better.
+## Following apply links
+
+A lot of postings don't carry the actual JD inline — they're a title, a few
+tags, and "Узнать подробнее и откликнуться: тут", with the real requirements
+living on the other end of that link. The same message is usually also
+padded with a footer of "more vacancies in other channels" links, which are
+noise.
+
+`links.py` extracts every link in a message (from Telethon entities in
+mtproto mode, from raw `<a>` tags in web-preview mode) and classifies each
+one: a bare `t.me/<channel>` link with a generic anchor is a crosspost and is
+ignored; an external domain, a specific `t.me/<channel>/<id>` post, or a
+`t.me/<channel>` link whose anchor reads like "apply here" / "message the
+recruiter" is worth following. For postings that are still short after the
+inline text (`links.skip_fetch_min_chars`), the apply link's page text is
+fetched and folded into what the LLM sees — cached by URL so a link shared
+across cross-posted duplicates, or seen again on a rerun, is only ever
+fetched once.
+
+A message whose apply link is a personal Telegram contact rather than a
+form/ATS gets a `📞 direct contact` badge and a small score bump
+(`links.recruiter_bonus`) — those consistently convert better.
+
+## The rubric
+
+The LLM scores 0-100 using explicit bands (a wrong-domain or wrong-seniority
+posting should score in the 0-20s, not hover around 50 — most rubric-less
+prompts compress scores into a comfortable middle range, which is the bug
+this fixes) and extracts a couple of facts about the posting alongside its
+judgement call: the seniority level it's hiring for, and whether it explicitly
+requires being based in Russia.
+
+Those two facts are then applied **deterministically in code**, not left to
+the model's own judgement: a posting matching `prefilter.reject_seniority` or
+`prefilter.reject_russia_only` gets a visible ⚠ flag and is dimmed on the
+dashboard. It's never hidden — a misfiring rule should stay easy to spot and
+override — but you no longer have to eyeball every "Middle" or
+Russia-residency-required posting yourself.
 
 ## Usage
 
@@ -128,9 +176,11 @@ TG** to jump to the original message.
 
 ## Tracking what you applied to
 
-Every posting carries a status — `new → applied → interviewing → offer`, plus
-`rejected` and `skipped` — with a free-text note and a timestamped history of
-every change. All of it lives in SQLite (`applications` table), so it survives
+Every posting carries a status — `new → maybe → applied → interviewing →
+offer`, plus `rejected` and `skipped` — with a free-text note and a
+timestamped history of every change. `maybe` is for the ones you're not sure
+about yet; it stays in the "open" view instead of getting buried with the
+rejects. All of it lives in SQLite (`applications` table), so it survives
 re-renders, re-runs, and moving the DB between machines.
 
 ```bash
@@ -166,35 +216,40 @@ src/jobscan/
   config.py              load + validate config.yaml, ${ENV} expansion,
                          resume-template guard
   models.py              SQLAlchemy models: channels, messages, verdicts,
-                         applications, application_events
+                         applications, application_events, link_fetches
   db.py                  DB facade — one short-lived session per call, so the
-                         same object is safe for the CLI and the API server
+                         same object is safe for the CLI and the API server;
+                         brings the schema up to date via Alembic on open
+  migrations/            Alembic environment + revisions (see below)
   fetcher.py             mtproto fetch (telethon)
   fetcher_web.py         t.me/s/<channel> fetch, no credentials
+  links.py               extracts/classifies links in a posting, fetches +
+                         caches the apply link's page text
   prefilter.py           free filter: job-signal + CV/job-wanted + keyword
   scorer.py              batched, parallel LLM scoring; verdict cache;
-                         retry-errors / refilter
-  llm.py                 openrouter / claude-code / ollama backends
+                         deterministic rubric flags; retry-errors / refilter
+  llm.py                 openai (OpenRouter or any compatible endpoint) /
+                         claude-code backends
   progress.py            terminal progress bar
   server.py              FastAPI app + `jobscan serve`
   dashboard.py           fills the template from the DB
   templates/dashboard.html   the page itself (edit this for UI changes)
 ```
 
-## Deployment
+Schema changes go through Alembic (`src/jobscan/migrations/`) rather than
+hand-written `ALTER TABLE`s. `DB.__init__` runs `alembic upgrade head`
+automatically — nothing to run by hand for normal use. If you're changing
+`models.py` yourself: point `alembic.ini`'s `sqlalchemy.url` at a scratch
+database (never your real one) and run `alembic revision --autogenerate -m "…"`
+from the project root, then review the generated file in
+`src/jobscan/migrations/versions/` before committing it.
 
-**Local schedule** — any cron entry that runs
-`uv run jobscan run -c /path/to/config.yaml` on a machine that stays awake.
+## Running it regularly
 
-**Container / Kubernetes** — `Dockerfile` builds an image with the `claude`
-CLI and dependencies baked in; `entrypoint.sh` expects its data dir on a
-persistent volume and seeds the Telegram session + Claude credentials from
-mounted secrets on first run. `deploy/` has manifests for running it as a
-daily `CronJob` (namespace, PVC, ConfigMap holding `config.yaml`, and the
-CronJob itself). Point the image, registry pull-secret, and the `telegram`
-secret at your own cluster. (The bundled image/manifests target the
-`claude-code` backend; for `openrouter` you can drop the CLI layer and just
-pass `OPENROUTER_API_KEY` as an env var.)
+However you schedule it, the shape is the same: a cron entry (or any
+scheduler) running `uv run jobscan run -c /path/to/config.yaml` on a machine
+that stays awake, pointed at a persistent `db_path`/`resume.md`/session file.
+A more portable, batteries-included deployment setup is in the works.
 
 ## Cost control
 
@@ -202,14 +257,17 @@ pass `OPENROUTER_API_KEY` as an env var.)
   Keywords are matched on **word boundaries** (so `ai` won't fire on "email"
   and `ml` won't fire on "html") — list your real stack / role terms, RU+EN;
   empty list = only generic job-post + CV detection.
+- `links.max_fetches_per_run` caps how many apply-link pages get fetched per
+  run; `links.skip_fetch_min_chars` skips the fetch entirely when the inline
+  message is already a full JD.
 - `llm.batch_size: 5` postings per LLM call; raise to save calls.
 - `llm.concurrency: 4` batches are scored in parallel with a live progress
-  bar. Raise it (4–6) to finish a big backlog faster on `openrouter` /
-  `claude-code`; set it to `1` for Ollama on a single local GPU. Cost is
-  unchanged — same number of calls, just overlapped.
+  bar. Raise it (4–6, more on a hosted endpoint) to finish a big backlog
+  faster; drop to `1` for a single local GPU. Cost is unchanged — same number
+  of calls, just overlapped.
 - Verdict cache means a rerun after failure only pays for what's new;
   `--prune-days` keeps the cache (and each run's fetch) from growing forever.
-- Pick a cheap `openrouter` model (or `llm.claude_code.model: "haiku"`) for the
+- Pick a cheap OpenRouter model (or `llm.claude_code.model: "haiku"`) for the
   lowest per-run cost.
 
 ## Security notes
@@ -217,7 +275,10 @@ pass `OPENROUTER_API_KEY` as an env var.)
 - `jobscan.session` grants full access to your Telegram account — treat it
   like a password, don't commit or copy it anywhere. `config.yaml`, `*.db`,
   `*.session` and `resume.md` are gitignored.
-- The tool is read-only: it never posts, joins, or messages anyone.
+- The tool is read-only against Telegram: it never posts, joins, or messages
+  anyone. It does make outbound HTTP GET requests to the apply links found in
+  thin postings (see "Following apply links") — plain fetches, nothing sent
+  beyond the request itself; set `links.enabled: false` to turn that off.
 - Polling your own subscribed channels once a day is normal client behavior;
   avoid pointing it at hundreds of channels or minute-level schedules.
 - `jobscan serve` binds loopback only and has no auth — don't expose it.
