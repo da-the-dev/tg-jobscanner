@@ -1,10 +1,11 @@
-"""Pluggable LLM backends: Claude Code subscription (headless CLI) or Ollama."""
+"""Pluggable LLM backends: Claude Code subscription (headless CLI), or any
+OpenAI-compatible endpoint (OpenRouter, a self-hosted Ollama/vLLM/LM Studio,
+or anything else that speaks the same API)."""
 
 import json
 import os
 import subprocess
 import tempfile
-import urllib.request
 
 import openai
 
@@ -73,42 +74,33 @@ class ClaudeCodeBackend:
         return wrapper["result"]
 
 
-class OllamaBackend:
+class OpenAIBackend:
+    """Any OpenAI-compatible /responses endpoint.
+
+    OpenRouter (the recommended default: hosted, pay-per-token, every model
+    worth using) is just one instance of this — a self-hosted Ollama, vLLM,
+    or LM Studio server speaks the same API. Only OpenRouter needs a real API
+    key and gets the OpenRouter-only tuning (no-reasoning, throughput
+    routing); anything else is called plain.
+    """
+
     def __init__(self, cfg):
-        oc = cfg["llm"]["ollama"]
-        self.host = oc.get("host", "http://localhost:11434").rstrip("/")
-        self.model = oc["model"]
-        self.name = f"ollama:{self.model}"
-
-    def complete(self, prompt, timeout=600):
-        body = json.dumps(
-            {
-                "model": self.model,
-                "messages": [{"role": "user", "content": prompt}],
-                "stream": False,
-                "options": {"temperature": 0.2},
-            }
-        ).encode()
-        req = urllib.request.Request(
-            self.host + "/api/chat",
-            data=body,
-            headers={"Content-Type": "application/json"},
-        )
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return json.loads(resp.read())["message"]["content"]
-
-
-class OpenrouterBackend:
-    def __init__(self, cfg):
-        oc = cfg["llm"]["openrouter"]
+        oc = cfg["llm"]["openai"]
         self.host = oc.get("host", "https://openrouter.ai/api/v1").rstrip("/")
         self.model = oc["model"]
-        self.name = f"openrouter:{self.model}"
-        self.api_key = os.environ.get("OPENROUTER_API_KEY")
-        if not self.api_key:
-            raise ValueError("No OPENROUTER_API_KEY specified in the env")
+        self.name = f"openai:{self.model}"
+        self.is_openrouter = "openrouter.ai" in self.host
+        key_env = oc.get("api_key_env", "OPENROUTER_API_KEY")
+        self.api_key = os.environ.get(key_env, "")
+        if self.is_openrouter and not self.api_key:
+            raise ValueError(f"No {key_env} specified in the env (required for OpenRouter)")
+        self.api_key = self.api_key or "not-needed"  # most self-hosted endpoints don't check
 
     def complete(self, prompt, timeout=600):
+        extra = {}
+        if self.is_openrouter:
+            extra["reasoning"] = {"effort": "none"}
+            extra["extra_body"] = {"provider": {"sort": "throughput"}}
         with openai.Client(
             api_key=self.api_key, base_url=self.host, timeout=timeout
         ) as client:
@@ -117,8 +109,7 @@ class OpenrouterBackend:
                 stream=False,
                 input=[{"role": "user", "content": prompt}],
                 temperature=0.2,
-                reasoning={"effort": "none"},
-                extra_body={"provider": {"sort": "throughput"}},
+                **extra,
             )
         return resp.output_text
 
@@ -127,13 +118,9 @@ def get_backend(cfg):
     backend = cfg["llm"]["backend"]
     if backend == "claude-code":
         return ClaudeCodeBackend(cfg)
-    if backend == "ollama":
-        return OllamaBackend(cfg)
-    if backend == "openrouter":
-        return OpenrouterBackend(cfg)
-    raise ValueError(
-        f"Unknown llm.backend: {backend} (use 'claude-code' or 'ollama' or 'openrouter')"
-    )
+    if backend == "openai":
+        return OpenAIBackend(cfg)
+    raise ValueError(f"Unknown llm.backend: {backend} (use 'claude-code' or 'openai')")
 
 
 def extract_json_array(text):
