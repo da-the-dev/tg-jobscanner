@@ -158,6 +158,7 @@ uv run jobscan run             # fetch + score + render the dashboard
 uv run jobscan serve --open    # live dashboard; status changes save to the DB
 uv run jobscan render --open   # re-render the static file and open it
 uv run jobscan stats           # message counts by status
+uv run jobscan remove-channel <username>  # drop a channel and its cached postings
 ```
 
 `run` flags (combine freely):

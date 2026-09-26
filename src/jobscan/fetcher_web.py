@@ -7,23 +7,14 @@ import hashlib
 import html as htmllib
 import re
 import time
-import urllib.request
 
+from . import httpio
 from . import links as links_mod
-
-UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-      "(KHTML, like Gecko) Chrome/126.0 Safari/537.36")
 
 POST_RE = re.compile(r'data-post="[^"/]+/(\d+)"')
 TEXT_RE = re.compile(
     r'<div class="tgme_widget_message_text[^"]*"[^>]*>(.*?)</div>', re.S)
 TIME_RE = re.compile(r'<time datetime="([^"]+)"')
-
-
-def _get(url):
-    req = urllib.request.Request(url, headers={"User-Agent": UA})
-    with urllib.request.urlopen(req, timeout=30) as r:
-        return r.read().decode("utf-8", "replace")
 
 
 def _strip_html(s):
@@ -71,7 +62,7 @@ def fetch_channel(username, last_id, cutoff, max_msgs, log=print, delay=1.0):
     before = None
     for _ in range(40):  # hard page cap
         url = f"https://t.me/s/{username}" + (f"?before={before}" if before else "")
-        page = _get(url)
+        page = httpio.get(url)
         if "tgme_widget_message" not in page:
             if before is None:
                 log(f"  !! '{username}' is not a public channel (no web preview)")

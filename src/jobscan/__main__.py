@@ -45,6 +45,10 @@ def main():
     apps.add_argument("--status", choices=STATUSES, help="only this status")
     apps.add_argument("--history", action="store_true", help="show the status timeline")
 
+    rm = sub.add_parser("remove-channel",
+                        help="delete a channel and its cached postings from the DB")
+    rm.add_argument("username", help="channel username or t.me link (e.g. @dev_jobs)")
+
     args = p.parse_args()
 
     cfg = config_mod.load(args.config)
@@ -115,6 +119,14 @@ def main():
         print(f"\n{len(rows)} shown · all tracked — " +
               " · ".join(f"{k}: {n}" for k, n in sorted(db.application_counts().items())
                          if k != "new"))
+        return
+
+    if args.cmd == "remove-channel":
+        name = args.username.strip().lstrip("@")
+        found, msgs, verds = db.remove_channel(name)
+        if not found:
+            raise SystemExit(f"no channel '@{name}' in the DB (check `jobscan stats`/config.yaml)")
+        print(f"Removed @{name}: {msgs} posting(s), {verds} verdict(s) no longer referenced.")
         return
 
     # run
