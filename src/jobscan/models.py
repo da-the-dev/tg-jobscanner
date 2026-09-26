@@ -4,7 +4,7 @@ from sqlalchemy import (BigInteger, ForeignKey, Index, Integer, String, Text,
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 # Pipeline order matters: it drives the dashboard's filter pills.
-STATUSES = ("new", "applied", "interviewing", "offer", "rejected", "skipped")
+STATUSES = ("new", "maybe", "applied", "interviewing", "offer", "rejected", "skipped")
 
 NOW = text("(datetime('now'))")
 
@@ -34,6 +34,9 @@ class Message(Base):
     text: Mapped[str | None] = mapped_column(Text)
     text_hash: Mapped[str | None] = mapped_column(String)
     link: Mapped[str | None] = mapped_column(String)
+    # JSON list of [anchor_text, url] pairs found in the message, extracted at
+    # fetch time (see links.py) — apply links, recruiter contacts, crossposts.
+    links: Mapped[str | None] = mapped_column(Text, default="[]", server_default="[]")
     # new | filtered_out | duplicate | scored | error
     status: Mapped[str] = mapped_column(String, default="new", server_default="new")
 
@@ -60,8 +63,26 @@ class Verdict(Base):
     reasons_skip: Mapped[str | None] = mapped_column(Text)
     strengths: Mapped[str | None] = mapped_column(Text)
     weaknesses: Mapped[str | None] = mapped_column(Text)
+    # Deterministic, code-applied (not LLM-scored) signals — see scorer.py:
+    # flags: JSON list like ["seniority:middle", "requires_russia"], dims the
+    #        row on the dashboard without hiding it (never touches relevant/score).
+    # contact_type: "recruiter_contact" when the apply link is a personal TG
+    #        contact rather than a form — bumps score slightly and badges the row.
+    flags: Mapped[str | None] = mapped_column(Text, default="[]", server_default="[]")
+    contact_type: Mapped[str | None] = mapped_column(String, default="", server_default="")
     model: Mapped[str | None] = mapped_column(String)
     created_at: Mapped[str | None] = mapped_column(String, server_default=NOW)
+
+
+class LinkFetch(Base):
+    """Cache of fetched apply-link page text, keyed by URL so a link shared
+    across cross-posted duplicates (or reruns) is only ever fetched once."""
+    __tablename__ = "link_fetches"
+
+    url: Mapped[str] = mapped_column(String, primary_key=True)
+    status: Mapped[str] = mapped_column(String)  # ok | failed
+    text: Mapped[str | None] = mapped_column(Text)
+    fetched_at: Mapped[str | None] = mapped_column(String, server_default=NOW)
 
 
 class Application(Base):

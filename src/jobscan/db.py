@@ -78,14 +78,14 @@ class DB:
                       .values(last_msg_id=msg_id))
 
     # --- messages ---
-    def add_message(self, cid, msg_id, date, text, link):
+    def add_message(self, cid, msg_id, date, text, link, links=None):
         h = text_hash(text)
         with self.Session.begin() as s:
             dup = s.scalar(select(Message.msg_id).where(Message.text_hash == h).limit(1))
             status = "duplicate" if dup is not None else "new"
             res = s.execute(insert(Message).on_conflict_do_nothing().values(
                 channel_id=cid, msg_id=msg_id, date=date, text=text,
-                text_hash=h, link=link, status=status))
+                text_hash=h, link=link, links=json.dumps(links or []), status=status))
             return res.rowcount > 0, status
 
     def set_status(self, cid, msg_id, status):
@@ -148,6 +148,28 @@ class DB:
                     Verdict.text_hash.not_in(tracked))).rowcount
         return msgs, verds
 
+    def remove_channel(self, username):
+        """Delete a channel and all its cached messages, for when you drop it
+        from config.yaml and want it gone from the board entirely. Verdicts
+        still referenced by another channel's cross-post, or by a tracked
+        application (status past 'new'), are kept.
+
+        Returns (found, messages_deleted, verdicts_deleted).
+        """
+        username = username.strip().lstrip("@")
+        tracked = select(Application.text_hash).where(Application.status != "new")
+        with self.Session.begin() as s:
+            cid = s.scalar(select(Channel.id)
+                           .where(func.lower(Channel.username) == username.lower()))
+            if cid is None:
+                return False, 0, 0
+            msgs = s.execute(delete(Message).where(Message.channel_id == cid)).rowcount
+            verds = s.execute(delete(Verdict).where(
+                Verdict.text_hash.not_in(select(Message.text_hash)),
+                Verdict.text_hash.not_in(tracked))).rowcount
+            s.execute(delete(Channel).where(Channel.id == cid))
+        return True, msgs, verds
+
     def stats(self):
         with self.Session() as s:
             return dict(s.execute(select(Message.status, func.count())
@@ -171,7 +193,8 @@ class DB:
             title=v.get("title") or "", company=v.get("company") or "",
             salary=v.get("salary") or "", location=v.get("location") or "",
             reasons_apply=arr("reasons_apply"), reasons_skip=arr("reasons_skip"),
-            strengths=arr("strengths"), weaknesses=arr("weaknesses"), model=model)
+            strengths=arr("strengths"), weaknesses=arr("weaknesses"),
+            flags=arr("flags"), contact_type=v.get("contact_type") or "", model=model)
         stmt = insert(Verdict).values(**values)
         stmt = stmt.on_conflict_do_update(
             index_elements=[Verdict.text_hash],
@@ -187,6 +210,20 @@ class DB:
             return s.execute(delete(Verdict).where(
                 Verdict.text_hash == h,
                 Verdict.text_hash.not_in(tracked))).rowcount
+
+    # --- link fetch cache (see links.py) ---
+    def get_link_fetch(self, url):
+        with self.Session() as s:
+            return s.get(LinkFetch, url)
+
+    def save_link_fetch(self, url, status, text):
+        stmt = insert(LinkFetch).values(url=url, status=status, text=text, fetched_at=NOW)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=[LinkFetch.url],
+            set_={"status": stmt.excluded.status, "text": stmt.excluded.text,
+                  "fetched_at": NOW})
+        with self.Session.begin() as s:
+            s.execute(stmt)
 
     def resolve_hash(self, prefix):
         """Match a full hash or unique prefix against scored postings."""

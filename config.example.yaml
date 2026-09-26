@@ -25,6 +25,20 @@ prefilter:                 # zero-cost filter before any LLM call
   # Message must contain at least one of these (your stack / role words, RU+EN).
   # Empty list [] disables this check (only generic job-signal filtering applies).
   my_keywords: ["python", "backend", "разработчик", "developer"]
+  # Postings the LLM extracts as hiring at these levels get a visible ⚠ flag
+  # and are dimmed on the dashboard (never hidden — a misfire stays easy to spot).
+  reject_seniority: ["middle"]
+  # Flag postings that explicitly require being physically based in Russia
+  # (tax residency, ИП, "только из РФ"). Silent-on-location postings pass.
+  reject_russia_only: true
+
+links:                     # follow "apply"/"read more" links for extra JD context
+  enabled: true
+  fetch_timeout: 10        # seconds per link fetch
+  max_fetches_per_run: 60  # new fetches per `jobscan run` (cache covers reruns/dupes)
+  skip_fetch_min_chars: 400  # don't bother if the TG message is already a full JD
+  recruiter_bonus: 8       # score bump when the apply link is a personal TG contact
+                           # rather than a form/ATS — you report a higher conversion rate on these
 
 llm:
   # === PICK ONE (in order of preference) ===

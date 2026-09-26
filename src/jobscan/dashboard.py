@@ -42,6 +42,8 @@ def build(cfg, db, live=False, api_base=""):
             "reasons_skip": json.loads(r["reasons_skip"] or "[]"),
             "strengths": json.loads(r["strengths"] or "[]"),
             "weaknesses": json.loads(r["weaknesses"] or "[]"),
+            "flags": json.loads(r["flags"] or "[]"),
+            "contact_type": r["contact_type"] or "",
         })
     html = (template()
             .replace("__DATA__", json.dumps(rows, ensure_ascii=False))

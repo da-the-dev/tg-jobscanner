@@ -3,6 +3,8 @@ import datetime
 
 from telethon.sync import TelegramClient
 
+from . import links as links_mod
+
 
 def make_client(cfg):
     tg = cfg["telegram"]
@@ -42,9 +44,10 @@ def fetch_new(cfg, db, log=print):
                     break  # first run: stop at time horizon
                 text = msg.message or ""
                 if text.strip():
+                    post_links = links_mod.extract_from_entities(text, msg.entities)
                     inserted, _ = db.add_message(
                         entity.id, msg.id, msg.date.isoformat(), text,
-                        msg_link(entity, msg.id))
+                        msg_link(entity, msg.id), links=post_links)
                     n += inserted
                 db.set_last_msg_id(entity.id, msg.id)
             added += n

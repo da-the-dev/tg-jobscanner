@@ -64,7 +64,10 @@
   .s-new { color:var(--accent); } .s-applied { color:var(--green); }
   .s-interviewing { color:var(--purple); } .s-offer { color:var(--green); }
   .s-rejected { color:var(--red); } .s-skipped { color:var(--dim); }
+  .s-maybe { color:var(--yellow); }
   tr.dim-row { opacity:.45; }
+  .flag-tag { border-color:var(--yellow); color:var(--yellow); }
+  .contact-tag { border-color:var(--green); color:var(--green); }
   .empty { color:var(--dim); padding:40px; text-align:center; }
   .banner { display:none; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:14px;
             padding:8px 12px; border-radius:6px; border:1px solid var(--border);
@@ -185,7 +188,7 @@ function save(h, patch){
 }
 
 /* ---------- filtering / rendering ---------- */
-const OPEN=['new','applied','interviewing','offer'];
+const OPEN=['new','maybe','applied','interviewing','offer'];
 function counts(){
   const c={all:DATA.length, open:0};
   STATUSES.forEach(s=>c[s]=0);
@@ -218,11 +221,13 @@ function render(){
           vb=sortKey==='status'?idx(b.status):(b[sortKey]??'');
     return (typeof va==='number'?va-vb:String(va).localeCompare(String(vb)))*sortDir;});
   tb.innerHTML=rows.map(d=>{
-    const st=d.status, dim=(st==='skipped'||st==='rejected');
+    const st=d.status, flags=d.flags||[], dim=(st==='skipped'||st==='rejected'||flags.length>0);
     return `<tr class="row ${dim?'dim-row':''}" data-h="${d.hash}">
       <td><span class="score" style="color:${color(d.score)}">${d.score}</span>
           <div class="bar"><div style="width:${d.score}%;background:${color(d.score)}"></div></div></td>
       <td><div class="title">${esc(d.title)||'(untitled)'}</div><div class="company">${esc(d.company)}</div>
+          ${flags.map(f=>`<span class="tag flag-tag">⚠ ${esc(f)}</span>`).join('')}
+          ${d.contact_type==='recruiter_contact'?'<span class="tag contact-tag">📞 direct contact</span>':''}
           ${d.note?`<div class="notemark">✎ ${esc(d.note).slice(0,80)}</div>`:''}</td>
       <td>${esc(d.salary)||'—'}</td><td>${esc(d.location)||'—'}</td>
       <td><span class="tag">${esc(d.channel)}</span></td>

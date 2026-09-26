@@ -8,7 +8,8 @@ import yaml
 DEFAULTS = {
     "fetch_mode": "web",  # "web" (public channels, no credentials) or "mtproto"
     "backfill": {"days": 30, "max_messages": 100},
-    "prefilter": {"min_length": 80, "my_keywords": []},
+    "prefilter": {"min_length": 80, "my_keywords": [],
+                 "reject_seniority": ["middle", "junior"], "reject_russia_only": True},
     "llm": {
         "backend": "openrouter",
         "batch_size": 5,
@@ -19,6 +20,8 @@ DEFAULTS = {
         "openrouter": {"host": "https://openrouter.ai/api/v1", "model": "deepseek/deepseek-chat"},
     },
     "scoring": {"min_score": 40},
+    "links": {"enabled": True, "fetch_timeout": 10, "max_fetches_per_run": 60,
+             "skip_fetch_min_chars": 400, "recruiter_bonus": 8},
     "serve": {"host": "127.0.0.1", "port": 8765},  # `jobscan serve` (status write-back)
     "resume_path": "resume.md",
     "db_path": "jobscan.db",

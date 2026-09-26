@@ -9,6 +9,8 @@ import re
 import time
 import urllib.request
 
+from . import links as links_mod
+
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/126.0 Safari/537.36")
 
@@ -36,7 +38,10 @@ def channel_id(username):
 
 
 def parse_page(page_html):
-    """Return list of (msg_id, iso_date, text), oldest→newest as served."""
+    """Return list of (msg_id, iso_date, text, links), oldest→newest as served.
+
+    links is a list of (anchor_text, url) pulled from the message's raw <a>
+    tags before they're stripped out of the plain text (see links.py)."""
     out = []
     # split page into per-message chunks anchored at data-post
     parts = re.split(r'(?=data-post=")', page_html)
@@ -49,7 +54,8 @@ def parse_page(page_html):
         tx = TEXT_RE.search(part)
         if not tx:
             continue  # media-only post
-        out.append((msg_id, tm.group(1) if tm else "", _strip_html(tx.group(1))))
+        post_links = links_mod.extract_from_html(tx.group(1))
+        out.append((msg_id, tm.group(1) if tm else "", _strip_html(tx.group(1)), post_links))
     # a message can appear twice (data-post on wrapper + footer link); dedupe
     seen, uniq = set(), []
     for item in out:
@@ -75,7 +81,7 @@ def fetch_channel(username, last_id, cutoff, max_msgs, log=print, delay=1.0):
         if not batch:
             break
         hit_boundary = False
-        for msg_id, date, text in batch:
+        for msg_id, date, text, post_links in batch:
             if msg_id <= last_id:
                 hit_boundary = True
                 continue
@@ -87,8 +93,8 @@ def fetch_channel(username, last_id, cutoff, max_msgs, log=print, delay=1.0):
                         continue
                 except ValueError:
                     pass
-            collected[msg_id] = (date, text)
-        oldest = min(m for m, _, _ in batch)
+            collected[msg_id] = (date, text, post_links)
+        oldest = min(m for m, _, _, _ in batch)
         if hit_boundary or len(collected) >= max_msgs or before == oldest:
             break
         before = oldest
@@ -111,10 +117,11 @@ def fetch_new(cfg, db, log=print):
         last = db.last_msg_id(cid)
         msgs = fetch_channel(username, last, cutoff, max_msgs, log=log)
         n = 0
-        for msg_id, date, text in msgs:
+        for msg_id, date, text, post_links in msgs:
             if text.strip():
                 inserted, _ = db.add_message(
-                    cid, msg_id, date, text, f"https://t.me/{username}/{msg_id}")
+                    cid, msg_id, date, text, f"https://t.me/{username}/{msg_id}",
+                    links=post_links)
                 n += inserted
             db.set_last_msg_id(cid, msg_id)
         added += n
