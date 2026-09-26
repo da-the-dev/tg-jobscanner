@@ -5,6 +5,7 @@ description = "Scan Telegram job channels and rank postings against your resume"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "alembic>=1.20.0",
     "fastapi>=0.115",
     "openai>=3.10.0",
     "pyyaml>=6.0.3",

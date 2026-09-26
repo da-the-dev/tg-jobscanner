@@ -8,13 +8,16 @@ import datetime
 import hashlib
 import json
 import re
+from importlib.resources import files
 
-from sqlalchemy import create_engine, delete, func, select, update
+from alembic import command
+from alembic.config import Config
+from sqlalchemy import create_engine, delete, func, inspect, select, update
 from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.orm import sessionmaker
 
 from .models import (STATUSES, Application, ApplicationEvent, Base, Channel,
-                     Message, Verdict)
+                     LinkFetch, Message, Verdict)
 
 __all__ = ["DB", "STATUSES", "text_hash"]
 
@@ -31,8 +34,29 @@ class DB:
         self.path = path
         self.engine = create_engine(f"sqlite+pysqlite:///{path}",
                                     connect_args={"check_same_thread": False})
-        Base.metadata.create_all(self.engine)
+        self._ensure_schema()
         self.Session = sessionmaker(self.engine, expire_on_commit=False)
+
+    def _ensure_schema(self):
+        """Bring the DB up to the latest schema via Alembic (see migrations/).
+
+        A brand new file has no tables yet — `upgrade("head")` runs every
+        revision from scratch. A pre-Alembic DB (this project's own history:
+        schema managed by create_all() + an ad-hoc ALTER before Alembic was
+        adopted) has the tables but no `alembic_version` row — replaying
+        revision 0001's CREATE TABLEs against it would collide, so it's
+        stamped at whichever revision its actual columns already match
+        first, then only the remaining revisions run.
+        """
+        cfg = Config()
+        cfg.set_main_option("script_location", str(files("jobscan").joinpath("migrations")))
+        cfg.set_main_option("sqlalchemy.url", f"sqlite:///{self.path}")
+
+        insp = inspect(self.engine)
+        if insp.has_table("channels") and not insp.has_table("alembic_version"):
+            has_links_col = "links" in {c["name"] for c in insp.get_columns("messages")}
+            command.stamp(cfg, "0002" if has_links_col else "0001")
+        command.upgrade(cfg, "head")
 
     # --- channels ---
     def upsert_channel(self, cid, username, title):
