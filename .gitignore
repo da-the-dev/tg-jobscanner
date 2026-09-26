@@ -225,3 +225,5 @@ config.yaml
 *.session
 resume.md
 
+# Generated output (jobscan render / run)
+/dashboard.html

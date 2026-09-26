@@ -41,21 +41,28 @@ links:                     # follow "apply"/"read more" links for extra JD conte
                            # rather than a form/ATS — you report a higher conversion rate on these
 
 llm:
-  # === PICK ONE (in order of preference) ===
-  #   "openrouter"  -> 1. pay-per-token hosted models, cheap, nothing to install
-  #   "claude-code" -> 2. Claude via a Claude Code subscription (no per-token cost)
-  #   "ollama"      -> 3. a local model: zero cost, fully offline, lower quality
-  backend: "openrouter"
+  # === PICK ONE ===
+  #   "openai"      -> any OpenAI-compatible endpoint. OpenRouter (below) is the
+  #                    recommended default — pay-per-token, nothing to install.
+  #                    The same backend also works with a self-hosted Ollama /
+  #                    vLLM / LM Studio server: just point `host` at it.
+  #   "claude-code" -> Claude via a Claude Code subscription (no per-token cost)
+  backend: "openai"
   batch_size: 5            # postings per LLM call (higher = fewer calls = cheaper)
-  concurrency: 4           # batches scored in parallel. 4-6 good for openrouter /
-                           # claude-code; use 1 for ollama on a single local GPU
+  concurrency: 4           # batches scored in parallel. 4-6 is good for a hosted
+                           # endpoint; drop to 1 for a single local GPU.
   output_language: "en"    # "en" or "ru" — language of the analysis in the dashboard
 
-  # --- 1. OpenRouter (used only when backend: openrouter) ---
-  # Requires OPENROUTER_API_KEY in the environment.
-  openrouter:
+  # --- 1. OpenAI-compatible endpoint (used only when backend: openai) ---
+  # Recommended: OpenRouter — requires OPENROUTER_API_KEY in the environment.
+  openai:
+    host: "https://openrouter.ai/api/v1"
     model: "deepseek/deepseek-chat"   # any id from https://openrouter.ai/models
-    # host: "https://openrouter.ai/api/v1"   # override only if you proxy it
+    api_key_env: "OPENROUTER_API_KEY"  # which env var holds the key
+    # To use a self-hosted server instead, point host at it — most don't check
+    # the key at all, so api_key_env can be left unset:
+    # host: "http://localhost:11434/v1"   # Ollama's OpenAI-compatible endpoint
+    # model: "qwen2.5:14b"                # must be pulled first: `ollama pull qwen2.5:14b`
 
   # --- 2. Claude subscription (used only when backend: claude-code) ---
   claude_code:
@@ -64,11 +71,6 @@ llm:
     use_subscription: true # strips ANTHROPIC_API_KEY/AUTH_TOKEN so the CLI uses
                            # your subscription login (prevents the 401). Set false
                            # only if you deliberately want CLI API-key auth.
-
-  # --- 3. local Ollama (used only when backend: ollama) ---
-  ollama:
-    host: "http://localhost:11434"
-    model: "qwen2.5:14b"   # must be pulled first: `ollama pull qwen2.5:14b`
 
 scoring:
   min_score: 40            # dashboard's default "min score" filter value

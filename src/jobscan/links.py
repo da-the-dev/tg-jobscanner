@@ -13,10 +13,8 @@ pointing at one specific post) is worth fetching for extra JD context.
 import html as htmllib
 import re
 import urllib.parse
-import urllib.request
 
-UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-      "(KHTML, like Gecko) Chrome/126.0 Safari/537.36")
+from . import httpio
 
 TG_ROOT_RE = re.compile(r"^https?://t\.me/(?!s/|c/|iv\b)([A-Za-z0-9_]+)/?(?:\?.*)?$")
 TG_POST_RE = re.compile(r"^https?://t\.me/(?!s/|c/)([A-Za-z0-9_]+)/(\d+)/?$")
@@ -144,9 +142,7 @@ def fetch_text(url, timeout=10, max_chars=4000):
     """Best-effort page text for JD enrichment. None on any failure — a
     blocked/JS-only/paywalled page just means we score off the TG text alone."""
     try:
-        req = urllib.request.Request(_fetch_url(url), headers={"User-Agent": UA})
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            raw = r.read().decode("utf-8", "replace")
+        raw = httpio.get(_fetch_url(url), timeout=timeout)
     except Exception:
         return None
     body = re.sub(r"(?is)<(script|style|nav|footer|header)\b.*?</\1>", " ", raw)
