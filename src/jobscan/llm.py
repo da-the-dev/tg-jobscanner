@@ -118,6 +118,7 @@ class OpenrouterBackend:
                 input=[{"role": "user", "content": prompt}],
                 temperature=0.2,
                 reasoning={"effort": "none"},
+                extra_body={"provider": {"sort": "throughput"}},
             )
         return resp.output_text
 
