@@ -16,10 +16,10 @@ from sqlalchemy import create_engine, delete, func, inspect, select, update
 from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.orm import sessionmaker
 
-from .models import (STATUSES, Application, ApplicationEvent, Base, Channel,
-                     LinkFetch, Message, Verdict)
+from .models import (DISCOVERY_STATUSES, STATUSES, Application, ApplicationEvent,
+                     Base, Channel, DiscoveredChannel, LinkFetch, Message, Verdict)
 
-__all__ = ["DB", "STATUSES", "text_hash"]
+__all__ = ["DB", "DISCOVERY_STATUSES", "STATUSES", "text_hash"]
 
 NOW = func.datetime("now")
 
@@ -224,6 +224,47 @@ class DB:
                   "fetched_at": NOW})
         with self.Session.begin() as s:
             s.execute(stmt)
+
+    # --- discovered channels (see links.py "crosspost" classification) ---
+    def record_discovered_channel(self, username, anchor_text, source_channel):
+        """One crosspost sighting: bump the count, remember the source
+        channel, keep the newest anchor text. A brand new username inserts
+        with mention_count=1; a repeat increments it and merges the source."""
+        username = username.lower()
+        with self.Session.begin() as s:
+            cur = s.get(DiscoveredChannel, username)
+            sources = json.loads(cur.source_channels) if cur else []
+            if source_channel not in sources:
+                sources.append(source_channel)
+            stmt = insert(DiscoveredChannel).values(
+                username=username, anchor_text=anchor_text, mention_count=1,
+                source_channels=json.dumps(sources), last_seen=NOW)
+            stmt = stmt.on_conflict_do_update(
+                index_elements=[DiscoveredChannel.username],
+                set_={"anchor_text": stmt.excluded.anchor_text,
+                      "mention_count": DiscoveredChannel.mention_count + 1,
+                      "source_channels": stmt.excluded.source_channels,
+                      "last_seen": NOW})
+            s.execute(stmt)
+
+    def discovered_channels(self, status=None):
+        """Crosspost candidates, most-mentioned first."""
+        stmt = select(DiscoveredChannel).order_by(DiscoveredChannel.mention_count.desc())
+        if status:
+            stmt = stmt.where(DiscoveredChannel.status == status)
+        with self.Session() as s:
+            return [_asdict(r) for r in s.scalars(stmt)]
+
+    def set_discovered_status(self, username, status):
+        if status not in DISCOVERY_STATUSES:
+            raise ValueError(f"unknown status {status!r} "
+                             f"(expected one of {', '.join(DISCOVERY_STATUSES)})")
+        username = username.strip().lstrip("@").lower()
+        with self.Session.begin() as s:
+            n = s.execute(update(DiscoveredChannel)
+                         .where(DiscoveredChannel.username == username)
+                         .values(status=status)).rowcount
+        return n > 0
 
     def resolve_hash(self, prefix):
         """Match a full hash or unique prefix against scored postings."""

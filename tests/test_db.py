@@ -4,6 +4,8 @@
 but keep any verdict still referenced by another channel's cross-post or by an
 application you're tracking (status past 'new').
 """
+import json
+
 from jobscan.db import DB, text_hash
 
 DATE = "2026-09-01T10:00:00+00:00"
@@ -85,3 +87,64 @@ def test_set_application_stamps_applied_at_once(tmp_path):
     assert row["applied_at"] == first
     events = [e["status"] for e in db.application_events(h)]
     assert events == ["applied", "rejected"]
+
+
+def test_record_discovered_channel_inserts_new(tmp_path):
+    db = DB(str(tmp_path / "t.db"))
+    db.record_discovered_channel("dev_jobs", "Разработчики", "alpha_jobs")
+
+    rows = db.discovered_channels()
+    assert len(rows) == 1
+    assert rows[0]["username"] == "dev_jobs"
+    assert rows[0]["anchor_text"] == "Разработчики"
+    assert rows[0]["mention_count"] == 1
+    assert json.loads(rows[0]["source_channels"]) == ["alpha_jobs"]
+    assert rows[0]["status"] == "new"
+
+
+def test_record_discovered_channel_repeat_bumps_count_and_merges_sources(tmp_path):
+    db = DB(str(tmp_path / "t.db"))
+    db.record_discovered_channel("dev_jobs", "Разработчики", "alpha_jobs")
+    db.record_discovered_channel("Dev_Jobs", "Разработчики →", "alpha_jobs")  # same source again
+    db.record_discovered_channel("dev_jobs", "Developers", "beta_jobs")       # a new source
+
+    rows = db.discovered_channels()
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["mention_count"] == 3
+    assert row["anchor_text"] == "Developers"  # most recent anchor text wins
+    assert json.loads(row["source_channels"]) == ["alpha_jobs", "beta_jobs"]
+
+
+def test_discovered_channels_sorted_by_mention_count(tmp_path):
+    db = DB(str(tmp_path / "t.db"))
+    db.record_discovered_channel("rare", "X", "alpha")
+    db.record_discovered_channel("popular", "Y", "alpha")
+    db.record_discovered_channel("popular", "Y", "beta")
+
+    rows = db.discovered_channels()
+    assert [r["username"] for r in rows] == ["popular", "rare"]
+
+
+def test_set_discovered_status_marks_added_and_filters(tmp_path):
+    db = DB(str(tmp_path / "t.db"))
+    db.record_discovered_channel("dev_jobs", "Разработчики", "alpha_jobs")
+
+    assert db.set_discovered_status("@dev_jobs", "added") is True
+    assert db.discovered_channels("new") == []
+    assert db.discovered_channels("added")[0]["username"] == "dev_jobs"
+
+
+def test_set_discovered_status_unknown_channel_returns_false(tmp_path):
+    db = DB(str(tmp_path / "t.db"))
+    assert db.set_discovered_status("nobody", "added") is False
+
+
+def test_set_discovered_status_rejects_unknown_status(tmp_path):
+    db = DB(str(tmp_path / "t.db"))
+    db.record_discovered_channel("dev_jobs", "Разработчики", "alpha_jobs")
+    try:
+        db.set_discovered_status("dev_jobs", "bogus")
+        assert False, "should have raised"
+    except ValueError:
+        pass

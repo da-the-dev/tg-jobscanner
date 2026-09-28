@@ -100,9 +100,12 @@ def fetch_new(cfg, db, log=print):
     max_msgs = int(cfg["backfill"]["max_messages"])
     cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=days)
     added = 0
+    known = {str(r).replace("https://t.me/s/", "").replace("https://t.me/", "")
+            .strip("/@ ").lower() for r in cfg["channels"]}
     for ref in cfg["channels"]:
         username = str(ref).replace("https://t.me/s/", "").replace(
             "https://t.me/", "").strip("/@ ")
+        source = username.lower()
         cid = channel_id(username)
         db.upsert_channel(cid, username, username)
         last = db.last_msg_id(cid)
@@ -114,6 +117,9 @@ def fetch_new(cfg, db, log=print):
                     cid, msg_id, date, text, f"https://t.me/{username}/{msg_id}",
                     links=post_links)
                 n += inserted
+                for uname, anchor in links_mod.crossposts_in(post_links):
+                    if uname != source and uname not in known:
+                        db.record_discovered_channel(uname, anchor, source)
             db.set_last_msg_id(cid, msg_id)
         added += n
         log(f"  {username}: +{n} new")

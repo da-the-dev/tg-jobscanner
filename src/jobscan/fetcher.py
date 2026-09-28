@@ -25,6 +25,7 @@ def fetch_new(cfg, db, log=print):
     max_msgs = int(cfg["backfill"]["max_messages"])
     cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=days)
     added = 0
+    known = {str(r).replace("https://t.me/", "").strip("/@ ").lower() for r in cfg["channels"]}
 
     with make_client(cfg) as client:
         for ref in cfg["channels"]:
@@ -36,6 +37,7 @@ def fetch_new(cfg, db, log=print):
                 continue
             db.upsert_channel(entity.id, getattr(entity, "username", None),
                               getattr(entity, "title", ref))
+            source = (getattr(entity, "username", None) or ref).lower()
             last = db.last_msg_id(entity.id)
             kwargs = {"min_id": last} if last else {"limit": max_msgs}
             n = 0
@@ -49,6 +51,9 @@ def fetch_new(cfg, db, log=print):
                         entity.id, msg.id, msg.date.isoformat(), text,
                         msg_link(entity, msg.id), links=post_links)
                     n += inserted
+                    for uname, anchor in links_mod.crossposts_in(post_links):
+                        if uname != source and uname not in known:
+                            db.record_discovered_channel(uname, anchor, source)
                 db.set_last_msg_id(entity.id, msg.id)
             added += n
             log(f"  {getattr(entity, 'title', ref)}: +{n} new")

@@ -135,6 +135,31 @@ A message whose apply link is a personal Telegram contact rather than a
 form/ATS gets a `📞 direct contact` badge and a small score bump
 (`links.recruiter_bonus`) — those consistently convert better.
 
+## Discovering new channels
+
+Your channels post their own crosspost footers: "more vacancies in other
+channels" (see above). Every fetch run now records those links too, instead
+of just discarding them. It skips a username already in your `channels`
+list. It saves every new one to a `discovered_channels` table, with a
+mention count, the link's label, and which of your channels linked to it.
+
+List the candidates:
+```bash
+uv run jobscan discovered
+```
+Each row shows the username, how many times it was seen, its most recent
+link label, and up to 3 source channels. A channel named by several
+different source channels is a stronger candidate than one named once.
+
+The tool never adds a channel to `config.yaml` for you — you review the
+list and add a channel yourself. Then mark it, so it stops cluttering the
+default view:
+```bash
+uv run jobscan discovered-mark <username> added     # you put it in config.yaml
+uv run jobscan discovered-mark <username> ignored    # not relevant
+uv run jobscan discovered --status added             # see them again later
+```
+
 ## The rubric
 
 The LLM scores 0-100 using explicit bands (a wrong-domain or wrong-seniority

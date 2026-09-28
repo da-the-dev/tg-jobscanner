@@ -1,10 +1,11 @@
 """CLI: python -m jobscan <command>"""
 import argparse
+import json
 import webbrowser
 
 from . import config as config_mod
 from . import dashboard, scorer
-from .db import DB, STATUSES
+from .db import DB, DISCOVERY_STATUSES, STATUSES
 from .llm import get_backend
 
 
@@ -48,6 +49,17 @@ def main():
     rm = sub.add_parser("remove-channel",
                         help="delete a channel and its cached postings from the DB")
     rm.add_argument("username", help="channel username or t.me link (e.g. @dev_jobs)")
+
+    disc = sub.add_parser("discovered",
+                          help="list channels found via crosspost links in your postings")
+    disc.add_argument("--status", choices=DISCOVERY_STATUSES,
+                      help="only this status (default: new)")
+
+    dmark = sub.add_parser("discovered-mark",
+                           help="mark a discovered channel added (put it in config.yaml "
+                                "yourself) or ignored, so it stops showing up")
+    dmark.add_argument("username", help="channel username, as shown by `discovered`")
+    dmark.add_argument("status", choices=DISCOVERY_STATUSES)
 
     args = p.parse_args()
 
@@ -127,6 +139,28 @@ def main():
         if not found:
             raise SystemExit(f"no channel '@{name}' in the DB (check `jobscan stats`/config.yaml)")
         print(f"Removed @{name}: {msgs} posting(s), {verds} verdict(s) no longer referenced.")
+        return
+
+    if args.cmd == "discovered":
+        rows = db.discovered_channels(args.status or "new")
+        if not rows:
+            print("Nothing new — channels get added here as crosspost links turn up "
+                  "in your postings. Run `jobscan run` first.")
+            return
+        for r in rows:
+            sources = ", ".join(json.loads(r["source_channels"])[:3])
+            print(f"@{r['username']:<28} x{r['mention_count']:<3} "
+                  f"{(r['anchor_text'] or '')[:30]:<30}  via {sources}")
+        print(f"\n{len(rows)} shown — "
+              f"`jobscan discovered-mark <username> added` once it's in config.yaml, "
+              f"or `ignored` to drop it from this list.")
+        return
+
+    if args.cmd == "discovered-mark":
+        name = args.username.strip().lstrip("@")
+        if not db.set_discovered_status(name, args.status):
+            raise SystemExit(f"no discovered channel '@{name}' (check `jobscan discovered`)")
+        print(f"@{name} marked {args.status}.")
         return
 
     # run
