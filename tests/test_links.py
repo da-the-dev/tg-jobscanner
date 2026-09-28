@@ -1,4 +1,4 @@
-from jobscan.links import analyze, classify
+from jobscan.links import analyze, classify, crossposts_in
 
 # --- TaxDome-style posting: one real apply link, rest are channel crossposts ---
 TAXDOME_LINKS = [
@@ -57,3 +57,23 @@ def test_analyze_flags_recruiter_contact_even_when_an_apply_link_also_exists():
 
 def test_analyze_with_no_links_returns_nothing():
     assert analyze([]) == (None, None, False)
+
+
+def test_crossposts_in_finds_only_the_crosspost_links():
+    out = dict(crossposts_in(TAXDOME_LINKS))
+    assert out == {"pm_channel": "Продакты и менеджеры",
+                   "design_channel": "Дизайнеры", "dev_channel": "Разработчики"}
+
+
+def test_crossposts_in_excludes_apply_and_recruiter_contact_links():
+    # velvetech: a recruiter-contact root link + two numbered apply posts —
+    # none of those are crossposts, so nothing should come back
+    assert crossposts_in(VELVETECH_LINKS) == []
+
+
+def test_crossposts_in_dedupes_a_repeated_footer_link():
+    repeated = [("Разработчики", "https://t.me/dev_channel"),
+               ("Разработчики →", "https://t.me/dev_channel")]
+    out = crossposts_in(repeated)
+    assert len(out) == 1
+    assert out[0][0] == "dev_channel"

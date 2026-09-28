@@ -6,6 +6,8 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 # Pipeline order matters: it drives the dashboard's filter pills.
 STATUSES = ("new", "maybe", "applied", "interviewing", "offer", "rejected", "skipped")
 
+DISCOVERY_STATUSES = ("new", "added", "ignored")
+
 NOW = text("(datetime('now'))")
 
 
@@ -83,6 +85,22 @@ class LinkFetch(Base):
     status: Mapped[str] = mapped_column(String)  # ok | failed
     text: Mapped[str | None] = mapped_column(Text)
     fetched_at: Mapped[str | None] = mapped_column(String, server_default=NOW)
+
+
+class DiscoveredChannel(Base):
+    """A channel found via crosspost links in your fetched channels' postings
+    (see links.py "crosspost" classification) — a candidate to add to
+    config.yaml, not yet subscribed. You review and add it yourself; the
+    tool never auto-subscribes."""
+    __tablename__ = "discovered_channels"
+
+    username: Mapped[str] = mapped_column(String, primary_key=True)
+    anchor_text: Mapped[str | None] = mapped_column(String)  # most recent link label seen
+    mention_count: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    source_channels: Mapped[str | None] = mapped_column(Text, default="[]", server_default="[]")
+    first_seen: Mapped[str | None] = mapped_column(String, server_default=NOW)
+    last_seen: Mapped[str | None] = mapped_column(String, server_default=NOW)
+    status: Mapped[str] = mapped_column(String, default="new", server_default="new")
 
 
 class Application(Base):

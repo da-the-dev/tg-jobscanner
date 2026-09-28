@@ -129,6 +129,20 @@ def analyze(links):
     return None, None, has_contact
 
 
+def crossposts_in(links):
+    """(username, anchor_text) pairs for every "crosspost" link in a message —
+    the candidates for channel discovery (see db.record_discovered_channel).
+    Deduped within the message: a footer link repeated twice counts once."""
+    out = {}
+    for anchor, url in links:
+        if classify(anchor, url) != "crosspost":
+            continue
+        m = TG_ROOT_RE.match(url)
+        if m:
+            out[m.group(1).lower()] = anchor
+    return list(out.items())
+
+
 def _fetch_url(url):
     """https://t.me/<user>/<id> has no inline text over plain HTTP — the /s/
     web-preview path does. Rewrite before fetching; every other URL as-is."""
